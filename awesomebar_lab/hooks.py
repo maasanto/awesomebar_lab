@@ -41,7 +41,10 @@ use_json_request_body = True
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/awesomebar_lab/css/awesomebar_lab.css"
-# app_include_js = "/assets/awesomebar_lab/js/awesomebar_lab.js"
+app_include_js = ["awesomebar_lab.bundle.js"]
+
+# Ships this user's decayed route scores with boot, so ranking costs no round trip.
+extend_bootinfo = "awesomebar_lab.frecency.boot_session"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/awesomebar_lab/css/awesomebar_lab.css"
@@ -294,4 +297,3 @@ require_type_annotated_api_methods = True
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
