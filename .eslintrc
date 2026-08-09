@@ -25,6 +25,7 @@
 	},
 	"root": true,
 	"globals": {
+		"awesomebar_lab": true,
 		"frappe": true,
 		"Vue": true,
 		"SetVueGlobals": true,
