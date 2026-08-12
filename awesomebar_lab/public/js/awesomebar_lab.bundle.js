@@ -7,6 +7,13 @@ frappe.provide("awesomebar_lab");
 // personal history, not the fuzzy score, should decide their order.
 const FRECENCY_BAND = 0.85;
 
+// The framework emits the same route from several sources, so the redistributed scores
+// contain duplicates — and Awesomplete's sort is stable, which resolves a tie by the
+// original position. Without a nudge a promoted result only ever ties the copies that
+// kept the top score, and renders behind them. Kept far below the 0.01 offsets the
+// framework itself uses as tie-breakers.
+const RANK_EPSILON = 1e-6;
+
 const MEMORY_KEY = "awesomebar_lab_selections";
 // Digit-only queries ("2024") would otherwise become integer-like object keys, which
 // JavaScript enumerates in numeric order before insertion order — silently breaking
@@ -114,11 +121,15 @@ awesomebar_lab.frecency = {
 			  }))
 			: null;
 
+		// Comparing scores would miss a result that moved up without gaining one, which is
+		// what happens whenever the score it moved past was a duplicate of its own.
+		const rank_before = new Map(near_ties.map((option, rank) => [option, rank]));
+
 		near_ties
 			.sort((a, b) => this.score_of(b) - this.score_of(a) || b.index - a.index)
 			.forEach((option, rank) => {
-				option.boosted_by_history = scores_to_share[rank] > option.index;
-				option.index = scores_to_share[rank];
+				option.boosted_by_history = rank < rank_before.get(option);
+				option.index = scores_to_share[rank] + (near_ties.length - rank) * RANK_EPSILON;
 			});
 
 		if (trace) this.log_rerank(trace, cutoff, options[0].index);
