@@ -322,10 +322,13 @@ awesomebar_lab.memory = {
 function add_history_marker(option) {
 	if (!option.boosted_by_history) return;
 
-	const reason = option.pinned_for_query
-		? __("Ranked higher because you keep picking it for this search")
-		: __("Ranked higher because you open this often");
-	const icon = frappe.utils.icon("history", "xs");
+	// A pin means "you picked this for this exact query", a clock means "you open this a
+	// lot" — two different reasons deserve two glyphs. Both live in the lucide sprite,
+	// which is the one set frappe 17, dodock 6 and dodock 5 all ship.
+	const [icon_name, reason] = option.pinned_for_query
+		? ["pin", __("Ranked higher because you keep picking it for this search")]
+		: ["history", __("Ranked higher because you open this often")];
+	const icon = frappe.utils.icon(icon_name, "xs");
 
 	option.label = `${
 		option.label || option.value
