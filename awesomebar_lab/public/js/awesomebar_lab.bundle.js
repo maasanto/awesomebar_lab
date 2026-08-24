@@ -112,6 +112,8 @@ awesomebar_lab.frecency = {
 	 * Swaps their scores rather than their positions: Awesomplete re-sorts the list
 	 * by `index` before rendering, so anything expressed as array order is discarded.
 	 * Options must arrive sorted by `index` descending.
+	 *
+	 * Returns the trace logger, for the caller to run once the pin has had its say.
 	 */
 	rerank(options) {
 		// fuzzy_match can go negative on long labels, and a non-positive top score
@@ -119,7 +121,10 @@ awesomebar_lab.frecency = {
 		if (!options.length || options[0].index <= 0) return;
 
 		const band = tuning("frecency_band");
-		const cutoff = options[0].index * band;
+		// Read before the loop below overwrites it, or the band is reported against
+		// whatever score landed on the first option instead of the best match.
+		const top_score = options[0].index;
+		const cutoff = top_score * band;
 		const near_ties = options.filter((option) => option.index >= cutoff);
 		const scores_to_share = near_ties.map((option) => option.index);
 
@@ -144,28 +149,42 @@ awesomebar_lab.frecency = {
 				option.index = scores_to_share[rank] + (near_ties.length - rank) * RANK_EPSILON;
 			});
 
-		if (trace) this.log_rerank(trace, cutoff, options[0].index, band);
+		// Deferred rather than logged here: the pin runs after this and can outrank
+		// everything the rerank just decided. A trace read mid-pipeline reports scores
+		// and promotions that no longer match what the dropdown renders.
+		return trace && (() => this.log_rerank(trace, cutoff, top_score, band));
 	},
 
 	log_rerank(trace, cutoff, top_score, band) {
-		const moved = trace.filter((row) => row.option.boosted_by_history).length;
-		const summary = moved
-			? `${moved} result(s) promoted by your history`
-			: "history agreed with the match ranking, nothing moved";
+		const pinned = trace.filter((row) => row.option.pinned_for_query).length;
+		const promoted = trace.filter(
+			(row) => row.option.boosted_by_history && !row.option.pinned_for_query
+		).length;
+		const summary =
+			[
+				promoted && `${promoted} moved up by how often you open them`,
+				pinned && `${pinned} pinned by what you keep picking for this search`,
+			]
+				.filter(Boolean)
+				.join(", ") || "history agreed with the match ranking, nothing moved";
 
 		console.groupCollapsed(
 			`[awesomebar_lab] ${trace.length} near-tie(s) within ${
 				band * 100
 			}% of ${top_score} (cutoff ${cutoff.toFixed(2)}) — ${summary}`
 		);
+		// Rows in final rank order, so the table can be read against the dropdown.
 		console.table(
-			trace.map((row) => ({
-				result: row.option.value,
-				match_score: row.was,
-				frecency: row.frecency,
-				final_score: row.option.index,
-				promoted: Boolean(row.option.boosted_by_history),
-			}))
+			trace
+				.sort((a, b) => b.option.index - a.option.index)
+				.map((row) => ({
+					result: row.option.value,
+					match_score: row.was,
+					frecency: row.frecency,
+					final_score: row.option.index,
+					promoted: Boolean(row.option.boosted_by_history),
+					pinned: Boolean(row.option.pinned_for_query),
+				}))
 		);
 		console.groupEnd();
 	},
@@ -354,9 +373,10 @@ frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
 
 		// The rerank wants the array sorted by index, which is how the framework
 		// returns it; the pin outranks the rerank.
-		awesomebar_lab.frecency.rerank(options);
+		const log_trace = awesomebar_lab.frecency.rerank(options);
 		awesomebar_lab.memory.pin(options, txt);
 		options.forEach(add_history_marker);
+		if (log_trace) log_trace();
 
 		return options.sort((a, b) => b.index - a.index);
 	}
