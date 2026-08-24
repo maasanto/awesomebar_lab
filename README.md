@@ -13,11 +13,28 @@ Two changes to how results are ordered, both driven by your own history:
   next time. Remembered per query rather than per result, stored on the device, and
   faded out again if you stop using it.
 
-Anything promoted by either mechanism is marked with a small history icon, so the
-ranking never changes silently.
+Anything promoted is marked, so the ranking never changes silently: a pin for a
+remembered pick, a clock for a frecency boost.
 
-The app adds no doctype and patches nothing: it subclasses the awesome bar and ships
-route scores in the boot payload. Uninstall it and the stock behaviour returns.
+The app patches nothing: it subclasses the awesome bar and ships route scores in the
+boot payload. Uninstall it and the stock behaviour returns.
+
+### Tuning
+
+While the ranking is being worked out, the numbers behind it live in **Awesomebar Lab
+Settings** (⌘K → "Awesomebar Lab Settings") rather than in the source:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Near-Tie Band | 0.85 | How close to the best match a result must score to be reordered by history. Lower reorders more of the list. |
+| Visit Half Life (Days) | 14 | How fast a past visit loses weight. Shorter favours this week, longer favours all-time. |
+| Routes Sent At Boot | 30 | How many of your top routes ship with boot; the rest rank as never visited. |
+| Minimum Confidence | 0.65 | How sure a remembered pick must be before it is pinned. Raise it to demand a repeated habit. |
+| Memory Half Life (Days) | 14 | How fast a remembered pick fades once you stop using the query. |
+
+Reload the desk after saving — the values ride along with boot. Clearing a field falls
+back to its default. This doctype is a development aid and will not ship with the
+finished feature.
 
 ### Compatibility
 
@@ -33,8 +50,15 @@ awesomebar_lab.debug(false);  // off
 ```
 
 Each search then logs the near-tie band, every candidate's match score and frecency,
-and what the remembered-pick memory decided. It is off by default and costs nothing
-when off.
+and what the remembered-pick memory decided. The table is printed once the ranking is
+settled and in final rank order, so it reads top to bottom like the dropdown itself.
+It is off by default and costs nothing when off.
+
+The ranking pipeline has a check of its own, which needs nothing but node:
+
+```bash
+node awesomebar_lab/tests/test_ranking.js
+```
 
 ### Installation
 

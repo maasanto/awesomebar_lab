@@ -1,0 +1,99 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-21 09:00:00.000000",
+ "description": "Knobs for tuning the awesome bar ranking during development. Reload the desk after saving. Clear a field to fall back to its default.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "frecency_section",
+  "frecency_band",
+  "frecency_half_life_days",
+  "column_break_frecency",
+  "boot_link_limit",
+  "memory_section",
+  "memory_min_confidence",
+  "memory_half_life_days"
+ ],
+ "fields": [
+  {
+   "fieldname": "frecency_section",
+   "fieldtype": "Section Break",
+   "label": "Frecency Ranking"
+  },
+  {
+   "default": "0.85",
+   "description": "Results scoring within this fraction of the best match are treated as near-ties and reordered by your history. 1 reorders nothing, 0.5 reorders half the list — lower it to let history win more often.",
+   "fieldname": "frecency_band",
+   "fieldtype": "Float",
+   "label": "Near-Tie Band",
+   "precision": "3"
+  },
+  {
+   "default": "14",
+   "description": "How long a visit keeps half its weight. Shorter favours what you opened this week, longer favours what you open most overall.",
+   "fieldname": "frecency_half_life_days",
+   "fieldtype": "Float",
+   "label": "Visit Half Life (Days)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "column_break_frecency",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "How many of your top routes ride along with boot. Anything outside this list ranks as never visited.",
+   "fieldname": "boot_link_limit",
+   "fieldtype": "Int",
+   "label": "Routes Sent At Boot",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "memory_section",
+   "fieldtype": "Section Break",
+   "label": "Remembered Picks"
+  },
+  {
+   "default": "0.65",
+   "description": "Confidence a remembered pick needs before it is pinned. Below about 0.67 a single pick already pins; raise it to demand a repeated habit.",
+   "fieldname": "memory_min_confidence",
+   "fieldtype": "Float",
+   "label": "Minimum Confidence",
+   "precision": "3"
+  },
+  {
+   "default": "14",
+   "description": "How long a remembered pick keeps half its weight once the query goes unused.",
+   "fieldname": "memory_half_life_days",
+   "fieldtype": "Float",
+   "label": "Memory Half Life (Days)",
+   "precision": "3"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-21 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Awesomebar Lab",
+ "name": "Awesomebar Lab Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -3,9 +3,26 @@
 
 frappe.provide("awesomebar_lab");
 
-// Results scoring within this fraction of the best match are close enough that
-// personal history, not the fuzzy score, should decide their order.
-const FRECENCY_BAND = 0.85;
+// Ranking knobs, resolved server side and shipped with boot so they can be tuned from
+// Awesomebar Lab Settings without a rebuild. The fallbacks cover a desk booted before
+// the doctype was migrated in; the shipped feature will inline the settled values.
+const TUNING_FALLBACKS = {
+	// Results scoring within this fraction of the best match are close enough that
+	// personal history, not the fuzzy score, should decide their order.
+	frecency_band: 0.85,
+	// Low enough that a single pick already pins, the way Raycast and Alfred learn. What
+	// makes that safe is the decay: a one-off fades in about three idle days, while a
+	// habit worth keeping lasts weeks.
+	memory_min_confidence: 0.65,
+	// How long a remembered pick keeps half its weight once the query goes unused.
+	memory_half_life_days: 14,
+};
+
+// Read per call rather than once at load: this bundle runs before frappe.boot exists.
+function tuning(key) {
+	const value = (frappe.boot.awesomebar_lab_settings || {})[key];
+	return value == null ? TUNING_FALLBACKS[key] : value;
+}
 
 // The framework emits the same route from several sources, so the redistributed scores
 // contain duplicates — and Awesomplete's sort is stable, which resolves a tie by the
@@ -20,12 +37,6 @@ const MEMORY_KEY = "awesomebar_lab_selections";
 // the LRU eviction below.
 const MEMORY_KEY_PREFIX = "q:";
 const MEMORY_MAX_QUERIES = 100;
-// Low enough that a single pick already pins, the way Raycast and Alfred learn. What
-// makes that safe is the decay below: a one-off fades in about three idle days, while
-// a habit worth keeping lasts weeks.
-const MEMORY_MIN_CONFIDENCE = 0.65;
-// How long a remembered pick keeps half its weight once the query goes unused.
-const MEMORY_HALF_LIFE_DAYS = 14;
 
 const DEBUG_KEY = "awesomebar_lab_debug";
 
@@ -107,7 +118,8 @@ awesomebar_lab.frecency = {
 		// puts the multiplicative cutoff above it — nothing near-tie-worthy there anyway.
 		if (!options.length || options[0].index <= 0) return;
 
-		const cutoff = options[0].index * FRECENCY_BAND;
+		const band = tuning("frecency_band");
+		const cutoff = options[0].index * band;
 		const near_ties = options.filter((option) => option.index >= cutoff);
 		const scores_to_share = near_ties.map((option) => option.index);
 
@@ -132,10 +144,10 @@ awesomebar_lab.frecency = {
 				option.index = scores_to_share[rank] + (near_ties.length - rank) * RANK_EPSILON;
 			});
 
-		if (trace) this.log_rerank(trace, cutoff, options[0].index);
+		if (trace) this.log_rerank(trace, cutoff, options[0].index, band);
 	},
 
-	log_rerank(trace, cutoff, top_score) {
+	log_rerank(trace, cutoff, top_score, band) {
 		const moved = trace.filter((row) => row.option.boosted_by_history).length;
 		const summary = moved
 			? `${moved} result(s) promoted by your history`
@@ -143,7 +155,7 @@ awesomebar_lab.frecency = {
 
 		console.groupCollapsed(
 			`[awesomebar_lab] ${trace.length} near-tie(s) within ${
-				FRECENCY_BAND * 100
+				band * 100
 			}% of ${top_score} (cutoff ${cutoff.toFixed(2)}) — ${summary}`
 		);
 		console.table(
@@ -200,7 +212,7 @@ awesomebar_lab.memory = {
 		const idle_days = entry.last_used
 			? (Date.now() - entry.last_used) / (24 * 60 * 60 * 1000)
 			: 0;
-		const weight = 0.5 ** (idle_days / MEMORY_HALF_LIFE_DAYS);
+		const weight = 0.5 ** (idle_days / tuning("memory_half_life_days"));
 		return (entry.hits * weight + 1) / ((entry.hits + entry.misses) * weight + 2);
 	},
 
@@ -237,14 +249,15 @@ awesomebar_lab.memory = {
 
 		if (debug_enabled) {
 			const confidence = this.confidence(memory[stored_key]);
+			const threshold = tuning("memory_min_confidence");
 			console.log(
 				`[awesomebar_lab] remembered "${normalized_query}" → "${updated.value}" ` +
 					`(${updated.hits} hit(s), ${
 						updated.misses
 					} miss(es), confidence ${confidence.toFixed(2)}) — ` +
-					(confidence > MEMORY_MIN_CONFIDENCE
+					(confidence > threshold
 						? "will be pinned for this query"
-						: `below the ${MEMORY_MIN_CONFIDENCE} threshold, not pinned yet`)
+						: `below the ${threshold} threshold, not pinned yet`)
 			);
 		}
 	},
@@ -259,7 +272,7 @@ awesomebar_lab.memory = {
 			const entry = memory[MEMORY_KEY_PREFIX + normalized_query.slice(0, length)];
 			if (entry) {
 				const confidence = this.confidence(entry);
-				const trusted = confidence > MEMORY_MIN_CONFIDENCE;
+				const trusted = confidence > tuning("memory_min_confidence");
 				if (debug_enabled) {
 					const via =
 						length === normalized_query.length
@@ -322,10 +335,13 @@ awesomebar_lab.memory = {
 function add_history_marker(option) {
 	if (!option.boosted_by_history) return;
 
-	const reason = option.pinned_for_query
-		? __("Ranked higher because you keep picking it for this search")
-		: __("Ranked higher because you open this often");
-	const icon = frappe.utils.icon("history", "xs");
+	// A pin means "you picked this for this exact query", a clock means "you open this a
+	// lot" — two different reasons deserve two glyphs. Both live in the lucide sprite,
+	// which is the one set frappe 17, dodock 6 and dodock 5 all ship.
+	const [icon_name, reason] = option.pinned_for_query
+		? ["pin", __("Ranked higher because you keep picking it for this search")]
+		: ["history", __("Ranked higher because you open this often")];
+	const icon = frappe.utils.icon(icon_name, "xs");
 
 	option.label = `${
 		option.label || option.value
