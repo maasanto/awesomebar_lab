@@ -16,6 +16,10 @@ Two changes to how results are ordered, both driven by your own history:
 Anything promoted is marked, so the ranking never changes silently: a pin for a
 remembered pick, a clock for a frecency boost.
 
+![Typing "ema" puts the most visited match first with a clock beside it; after Email
+Account List is picked once for that query, typing "ema" again pins it to the top with a
+pin beside it](docs/demo.gif)
+
 The app patches nothing: it subclasses the awesome bar and ships route scores in the
 boot payload. Uninstall it and the stock behaviour returns.
 
