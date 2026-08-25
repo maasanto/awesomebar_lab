@@ -3,7 +3,7 @@ app_title = "Awesomebar Lab"
 app_publisher = "Antoine Maas"
 app_description = "Frecency ranking and remembered picks for the Frappe and Dokos awesome bar"
 app_email = "antoine.maas@gmail.com"
-app_license = "mit"
+app_license = "agpl-3.0"
 
 # Send non-GET requests for this app's endpoints as native `application/json`
 # bodies instead of form-encoded, per-key JSON-stringified values.
