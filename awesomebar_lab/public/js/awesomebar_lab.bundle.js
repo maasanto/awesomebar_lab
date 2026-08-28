@@ -382,6 +382,57 @@ frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
 	}
 };
 
+/**
+ * Route History skips single-segment routes and every Form route, which silently
+ * excludes the two destinations the awesome bar offers as a single fixed page: desk
+ * Pages ("Open Bank Reconciliation") and single doctypes. Neither could ever earn a
+ * frecency score, however often it was opened.
+ *
+ * Recorded here rather than by relaxing `is_route_useful`, which is module-local and
+ * has no override point. Only routes the framework declines to record are queued, so
+ * nothing is inserted twice. See DEVLOG.md for the framework fix this stands in for.
+ */
+function is_fixed_destination(route) {
+	if (route.length === 1) return Boolean(frappe.boot.page_info?.[route[0]]);
+
+	// A single's form route repeats the doctype as the document name (router.js).
+	return (
+		route[0] === "Form" &&
+		route[1] === route[2] &&
+		(frappe.boot.single_types || []).includes(route[1])
+	);
+}
+
+let unrecorded_visits = [];
+
+// Same flush interval the framework uses for the routes it does record, so a burst of
+// navigation costs one call either way.
+const flush_unrecorded_visits = frappe.utils.debounce(() => {
+	const routes = unrecorded_visits;
+	unrecorded_visits = [];
+	frappe
+		.xcall("frappe.desk.doctype.route_history.route_history.deferred_insert", { routes })
+		.then(() => {
+			if (debug_enabled) {
+				console.log(
+					`[awesomebar_lab] recorded ${routes.length} visit(s) the framework skips`,
+					routes.map((visit) => visit.route)
+				);
+			}
+		});
+}, 10000);
+
+frappe.router.on("change", () => {
+	const route = frappe.get_route();
+	if (!is_fixed_destination(route)) return;
+
+	unrecorded_visits.push({
+		creation: frappe.datetime.now_datetime(),
+		route: frappe.get_route_str(),
+	});
+	flush_unrecorded_visits();
+});
+
 // Delegated rather than bound to the input: the framework clears the field inside its
 // own select handler, so by the time this bubbles up there is nothing left to read.
 let last_query = "";
