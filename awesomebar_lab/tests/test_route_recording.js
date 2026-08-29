@@ -16,6 +16,7 @@ const vm = require("node:vm");
 const BUNDLE = path.join(__dirname, "../public/js/awesomebar_lab.bundle.js");
 
 let frecency;
+let boot_frecency = [];
 
 function visit(routes) {
 	let on_route_change;
@@ -34,6 +35,7 @@ function visit(routes) {
 			boot: {
 				page_info: { "bank-reconciliation": { title: "Bank Reconciliation" } },
 				single_types: ["Bank Clearance"],
+				awesomebar_lab_frecency: boot_frecency,
 			},
 			session: { user: "Administrator" },
 			datetime: { now_datetime: () => "2026-08-28 12:00:00" },
@@ -89,6 +91,11 @@ const drafts = visit([
 	// Slugged, so a two-word doctype keys on dashes rather than the space it is named with.
 	["Form", "Sales Invoice", "new-sales-invoice-qpwoeiruty"],
 	["Form", "Quotation", "QTN-0001"],
+	// A stored document can be named anything, draft-shaped names included, so the test
+	// has to be anchored at the start rather than merely present in the name.
+	["Form", "Quotation", "QTN-new-quotation-0001"],
+	// Whole doctype only: without the trailing dash, Quotation claims Quotation Item.
+	["Form", "Quotation", "new-quotationx-fjqbxlmzvd"],
 ]);
 assert.deepEqual(
 	drafts.flatMap((call) => call.routes.map((visit) => visit.route)),
@@ -109,19 +116,26 @@ assert.deepEqual(
 // An unknown one-segment route is not a Page this user can open, so it is not a visit.
 assert.deepEqual(visit([["some-removed-page"], [""]]), []);
 
-// Drafts are only worth recording if every one of them keys to the same destination —
-// the generated suffix differs per draft, so keying on the route itself counts nothing.
-assert.equal(
-	frecency.route_key("Form/Quotation/new-quotation-fjqbxlmzvd"),
-	frecency.route_key("Form/Quotation/new-quotation-zzzzzzzzzz")
-);
-assert.equal(frecency.route_key("Form/Quotation/QTN-0001"), "Form/Quotation/QTN-0001");
-assert.equal(frecency.route_key(["List", "Sales Invoice"]), "List/Sales Invoice");
+// Drafts are folded server side, by visit_key in frecency.py, so the client sees them
+// already keyed. Loaded from a boot payload rather than assigned, because summing that
+// payload into scores is the step the creatable depends on.
+boot_frecency = [
+	{ route: "New/Quotation", score: 3.1 },
+	{ route: "New/Quotation", score: 1.1 },
+	{ route: "List/Sales Invoice/List", score: 9.9 },
+];
+visit([]);
+frecency.load();
 
-// The creatable the awesome bar offers has no route at all, so it has to reach that same
-// key through `match` or the recorded drafts score nothing.
-frecency.scores = { [frecency.route_key("Form/Quotation/new-quotation-fjqbxlmzvd")]: 4.2 };
+// The creatable has no route at all, so `match` is the only way it reaches that key. The
+// literal key is asserted, not rebuilt from route_key, or renaming both sides in step
+// would pass while the Python half kept writing the old one.
 assert.equal(frecency.score_of({ type: "New", match: "Quotation" }), 4.2);
 assert.equal(frecency.score_of({ type: "New", match: "Sales Invoice" }), 0);
 
-console.log("only the routes the framework skips are recorded, and drafts share one key");
+// A draft the framework offers under recent pages carries its own full route. Collapsing
+// that client side too would hand one dead draft the score of every draft ever opened.
+assert.equal(frecency.score_of({ route: ["Form", "Quotation", "new-quotation-fjqbxlmzvd"] }), 0);
+assert.equal(frecency.score_of({ route: ["List", "Sales Invoice"] }), 9.9);
+
+console.log("only the routes the framework skips are recorded, and creatables find their key");
