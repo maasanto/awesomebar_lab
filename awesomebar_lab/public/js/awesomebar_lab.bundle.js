@@ -68,10 +68,16 @@ awesomebar_lab.debug = function (enable = true) {
 };
 
 /**
- * An unsaved document is named `new-<slugged doctype>-<random>` (frappe.model.get_new_name),
- * so every draft routes somewhere different and no two visits would ever share a key. The
- * framework has no predicate for this — it inlines the same prefix test in model.js and
- * breadcrumbs.js — so it is inlined here too.
+ * Whether a Form route points at an unsaved draft rather than a stored document.
+ *
+ * Mirrors frappe.model.get_new_name, which names a draft `slug(new-<doctype>-<random>)`,
+ * and its slug only lowercases and turns spaces into dashes. The trailing dash is what
+ * keeps `Quotation` from claiming a `Quotation Item` draft; the framework's own inlined
+ * copies of this test in model.js and breadcrumbs.js leave it off.
+ *
+ * Used only to decide what to record. Scoring reads the key the server already folded —
+ * collapsing drafts here as well would hand a recent draft in the results the aggregate
+ * score of every draft ever opened.
  */
 function is_new_document(doctype, docname) {
 	return (
@@ -79,8 +85,8 @@ function is_new_document(doctype, docname) {
 	);
 }
 
-// Creatables carry no route to key on, so drafts of a doctype are counted under a name of
-// this app's own. Namespaced to keep it clear of the route keys it shares a table with.
+// Must match visit_key in frecency.py, which is where drafts are actually folded — this
+// is only how the routeless "New Quotation" option finds what that fold produced.
 function new_document_key(doctype) {
 	return `New/${doctype}`;
 }
@@ -95,10 +101,6 @@ awesomebar_lab.frecency = {
 	 */
 	route_key(route) {
 		const parts = typeof route === "string" ? route.split("/") : route;
-		// Every draft of a doctype is the same destination: "the new Quotation form".
-		if (parts[0] === "Form" && is_new_document(parts[1], parts[2])) {
-			return new_document_key(parts[1]);
-		}
 		const is_list_view = parts[0] === "List" && !["Report", "Inbox"].includes(parts[2]);
 		return (is_list_view ? parts.slice(0, 2) : parts).join("/");
 	},

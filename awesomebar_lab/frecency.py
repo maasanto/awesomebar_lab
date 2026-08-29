@@ -36,6 +36,36 @@ def get_tuning() -> dict:
 	return {key: settings.get(key) or default for key, default in TUNING_DEFAULTS.items()}
 
 
+def is_new_document(doctype: str, docname: str) -> bool:
+	"""Whether a Form route points at an unsaved draft rather than a stored document.
+
+	Mirrors frappe.model.get_new_name, which names a draft `slug(new-<doctype>-<random>)`,
+	and its slug only lowercases and turns spaces into dashes. The trailing dash is what
+	keeps `Quotation` from claiming a `Quotation Item` draft; the framework's own inlined
+	copies of this test in model.js and breadcrumbs.js leave it off.
+	"""
+	return docname.startswith(f"new-{doctype.lower().replace(' ', '-')}-")
+
+
+def visit_key(route: str) -> str:
+	"""The key a visit is counted under.
+
+	Every draft of a doctype routes to a different generated name, so counted raw they
+	are singletons worth one visit each and none of them survives the top-N cut in
+	frequently_visited_links below. Folding them here rather than in the browser is the
+	whole point: the cut happens first, and by then the drafts are gone.
+
+	Only routes with a per-visit identity need this. A list view is already one route
+	however often it is opened, which is why the client still collapses those itself.
+	"""
+	parts = route.split("/")
+	if len(parts) == 3 and parts[0] == "Form" and is_new_document(parts[1], parts[2]):
+		# Kept in step with new_document_key in awesomebar_lab.bundle.js, which is what
+		# the awesome bar's routeless "New Quotation" option looks itself up by.
+		return f"New/{parts[1]}"
+	return route
+
+
 def score_visits(visits: list[dict], now: datetime, half_life_days: float) -> Counter:
 	"""Score each route by how much *and* how recently it was visited.
 
@@ -48,7 +78,7 @@ def score_visits(visits: list[dict], now: datetime, half_life_days: float) -> Co
 		# Timestamps come from the browser clock via deferred_insert, so a visit can
 		# sit ahead of server time — it must never be worth more than one from right now.
 		age_days = max(0, (now - visit["creation"]).total_seconds() / 86400)
-		scores[visit["route"]] += 0.5 ** (age_days / half_life_days)
+		scores[visit_key(visit["route"])] += 0.5 ** (age_days / half_life_days)
 	return scores
 
 
