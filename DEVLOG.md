@@ -37,6 +37,29 @@ It lives here rather than in dodock because this app runs on a production site: 
 app-side diff ships and rolls back with the app, while a framework patch means deploying
 a dodock change for an experiment.
 
+### What it also changes, and what was left alone
+
+Route History is not this app's private input. `frappe.boot.frequently_visited_links`
+reads the same table and feeds the awesome bar's empty-query dropdown — the list shown on
+focus, before anything is typed, from the `txt.length > 1` branch in `awesome_bar.js`. So
+writing these visits also changes what the framework suggests, where everything else here
+only reorders what the framework already produced.
+
+Accepted rather than worked around. `get_recent_pages` already puts Pages and singles in
+that dropdown from the in-session `frappe.route_history`; what changes is that they now
+persist across sessions and can hold one of the five frequent slots, which is what
+"frequently visited" is supposed to mean.
+
+Deliberately not permission-checked, unlike the Page branch: `frappe.boot.single_types` is
+every single on the site, while `page_info` is filtered at boot. A single the user cannot
+read is never offered by the awesome bar — `get_doctypes` iterates `can_read` — and is not
+reachable from the UI, so recording one means typing its URL by hand. A guard would cost
+more than the case is worth.
+
+Worth keeping straight when reading a trace: none of this touches the fuzzy score. These
+results always matched and always ranked; it was the frecency column that was pinned at
+`0`, which is why they sat mid-list rather than missing.
+
 ### Upstreaming it
 
 The workaround is a stand-in for a framework fix. `is_route_useful` is module-local with
