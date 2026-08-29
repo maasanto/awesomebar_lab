@@ -67,6 +67,24 @@ awesomebar_lab.debug = function (enable = true) {
 	);
 };
 
+/**
+ * An unsaved document is named `new-<slugged doctype>-<random>` (frappe.model.get_new_name),
+ * so every draft routes somewhere different and no two visits would ever share a key. The
+ * framework has no predicate for this — it inlines the same prefix test in model.js and
+ * breadcrumbs.js — so it is inlined here too.
+ */
+function is_new_document(doctype, docname) {
+	return (
+		Boolean(docname) && docname.startsWith(`new-${doctype.toLowerCase().replace(/ /g, "-")}-`)
+	);
+}
+
+// Creatables carry no route to key on, so drafts of a doctype are counted under a name of
+// this app's own. Namespaced to keep it clear of the route keys it shares a table with.
+function new_document_key(doctype) {
+	return `New/${doctype}`;
+}
+
 awesomebar_lab.frecency = {
 	scores: null,
 
@@ -77,6 +95,10 @@ awesomebar_lab.frecency = {
 	 */
 	route_key(route) {
 		const parts = typeof route === "string" ? route.split("/") : route;
+		// Every draft of a doctype is the same destination: "the new Quotation form".
+		if (parts[0] === "Form" && is_new_document(parts[1], parts[2])) {
+			return new_document_key(parts[1]);
+		}
 		const is_list_view = parts[0] === "List" && !["Report", "Inbox"].includes(parts[2]);
 		return (is_list_view ? parts.slice(0, 2) : parts).join("/");
 	},
@@ -102,6 +124,9 @@ awesomebar_lab.frecency = {
 
 	score_of(option) {
 		if (!this.scores) this.load();
+		// "New Quotation" opens a form through a callback rather than a route, so it has
+		// no route to key on and `match` is the only place its doctype survives.
+		if (option.type === "New") return this.scores[new_document_key(option.match)] || 0;
 		return option.route ? this.scores[this.route_key(option.route)] || 0 : 0;
 	},
 
@@ -383,23 +408,25 @@ frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
 };
 
 /**
- * Route History skips single-segment routes and every Form route, which silently
- * excludes the two destinations the awesome bar offers as a single fixed page: desk
- * Pages ("Open Bank Reconciliation") and single doctypes. Neither could ever earn a
- * frecency score, however often it was opened.
+ * Route History skips single-segment routes and every Form route, which silently excludes
+ * three destinations the awesome bar offers: desk Pages ("Open Bank Reconciliation"),
+ * single doctypes, and the new-document form behind every "New Quotation". None of them
+ * could ever earn a frecency score, however often they were opened.
  *
  * Recorded here rather than by relaxing `is_route_useful`, which is module-local and
  * has no override point. Only routes the framework declines to record are queued, so
  * nothing is inserted twice. See DEVLOG.md for the framework fix this stands in for.
  */
-function is_fixed_destination(route) {
+function is_skipped_destination(route) {
 	if (route.length === 1) return Boolean(frappe.boot.page_info?.[route[0]]);
+	if (route[0] !== "Form") return false;
 
-	// A single's form route repeats the doctype as the document name (router.js).
+	// A single's form route repeats the doctype as the document name (router.js); a draft
+	// carries a generated name. Saved documents stay out — one row per document would
+	// bury the destinations this ranks on, which is why the framework skips Form at all.
 	return (
-		route[0] === "Form" &&
-		route[1] === route[2] &&
-		(frappe.boot.single_types || []).includes(route[1])
+		(route[1] === route[2] && (frappe.boot.single_types || []).includes(route[1])) ||
+		is_new_document(route[1], route[2])
 	);
 }
 
@@ -424,7 +451,7 @@ const flush_unrecorded_visits = frappe.utils.debounce(() => {
 
 frappe.router.on("change", () => {
 	const route = frappe.get_route();
-	if (!is_fixed_destination(route)) return;
+	if (!is_skipped_destination(route)) return;
 
 	unrecorded_visits.push({
 		creation: frappe.datetime.now_datetime(),
