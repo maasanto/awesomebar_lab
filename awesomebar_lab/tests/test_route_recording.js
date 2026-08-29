@@ -15,6 +15,8 @@ const vm = require("node:vm");
 
 const BUNDLE = path.join(__dirname, "../public/js/awesomebar_lab.bundle.js");
 
+let frecency;
+
 function visit(routes) {
 	let on_route_change;
 	const inserted = [];
@@ -51,6 +53,7 @@ function visit(routes) {
 
 	vm.createContext(desk);
 	vm.runInContext(fs.readFileSync(BUNDLE, "utf8"), desk, { filename: BUNDLE });
+	frecency = desk.awesomebar_lab.frecency;
 
 	routes.forEach((route) => {
 		desk.frappe.get_route = () => route;
@@ -79,6 +82,19 @@ assert.deepEqual(
 	["Form/Bank Clearance/Bank Clearance"]
 );
 
+// An unsaved draft is a Form route the framework skips, and the doctype slug in its
+// generated name is what separates it from a saved document.
+const drafts = visit([
+	["Form", "Quotation", "new-quotation-fjqbxlmzvd"],
+	// Slugged, so a two-word doctype keys on dashes rather than the space it is named with.
+	["Form", "Sales Invoice", "new-sales-invoice-qpwoeiruty"],
+	["Form", "Quotation", "QTN-0001"],
+]);
+assert.deepEqual(
+	drafts.flatMap((call) => call.routes.map((visit) => visit.route)),
+	["Form/Quotation/new-quotation-fjqbxlmzvd", "Form/Sales Invoice/new-sales-invoice-qpwoeiruty"]
+);
+
 // Everything the framework already records has to stay out, or every visit counts twice.
 assert.deepEqual(
 	visit([
@@ -93,4 +109,19 @@ assert.deepEqual(
 // An unknown one-segment route is not a Page this user can open, so it is not a visit.
 assert.deepEqual(visit([["some-removed-page"], [""]]), []);
 
-console.log("only the routes the framework skips are recorded");
+// Drafts are only worth recording if every one of them keys to the same destination —
+// the generated suffix differs per draft, so keying on the route itself counts nothing.
+assert.equal(
+	frecency.route_key("Form/Quotation/new-quotation-fjqbxlmzvd"),
+	frecency.route_key("Form/Quotation/new-quotation-zzzzzzzzzz")
+);
+assert.equal(frecency.route_key("Form/Quotation/QTN-0001"), "Form/Quotation/QTN-0001");
+assert.equal(frecency.route_key(["List", "Sales Invoice"]), "List/Sales Invoice");
+
+// The creatable the awesome bar offers has no route at all, so it has to reach that same
+// key through `match` or the recorded drafts score nothing.
+frecency.scores = { [frecency.route_key("Form/Quotation/new-quotation-fjqbxlmzvd")]: 4.2 };
+assert.equal(frecency.score_of({ type: "New", match: "Quotation" }), 4.2);
+assert.equal(frecency.score_of({ type: "New", match: "Sales Invoice" }), 0);
+
+console.log("only the routes the framework skips are recorded, and drafts share one key");
