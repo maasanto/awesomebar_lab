@@ -8,17 +8,36 @@ the framework, and what to do with each workaround when the framework catches up
 Extends the 2026-08-28 entry below to a third destination, and takes two things to work
 rather than one.
 
-### Drafts have to be collapsed before they can be counted
+### Drafts have to be collapsed before they can be counted, and before the boot cut
 
 An unsaved document is named `new-<slugged doctype>-<random>` (`frappe.model.get_new_name`
 in `create_new.js`), so every draft routes somewhere different. Recorded as-is, a hundred
 new quotations are a hundred routes visited once each, and frecency has nothing to add up.
-`route_key` folds any `Form/<doctype>/new-<slug>-…` to `New/<doctype>` — the same trick it
-already plays on list views, which is why it belongs there rather than at the call site.
+
+The fold lives in `visit_key` in `frecency.py`, on the server, and this is the part that is
+easy to get wrong: `frequently_visited_links` ships only `most_common(boot_link_limit)`.
+Folding in the browser instead — where `route_key` already folds list views — puts the
+fold *after* that cut. Each draft then reaches it as a singleton worth at most one visit,
+loses all thirty slots to aggregated routes, and the whole feature scores zero for exactly
+the heavy users it was built for. Worse, a light user gets the inverse: drafts do survive
+the cut, evict real routes, and the score saturates at whatever slots were left, so it is
+not even monotonic in the thing it claims to measure.
+
+The rule this leaves behind: fold anything with a per-visit identity server side. List
+views can stay in `route_key` because a list is already one route however often it is
+opened, so the cut has nothing to destroy.
+
+The client deliberately does *not* fold drafts, and that is not just redundancy. The
+awesome bar offers recently visited Form routes as results (`get_recent_pages` reads
+`frappe.route_history`), so a live draft appears with its own full route. Folding client
+side would hand that one dead draft the summed score of every draft ever opened and label
+it "you open this often". `test_route_recording.js` pins this.
 
 The framework has no "is this a new document name?" predicate. It inlines the prefix test
-in `model.js` and again in `breadcrumbs.js`, so this app inlines it a third time rather
-than depending on a private helper that does not exist.
+in `model.js` and again in `breadcrumbs.js`, so this is inlined a third time — once in
+`frecency.py` for the fold and once in the bundle for the recording decision — rather than
+depending on a private helper that does not exist. Both keep the trailing dash the
+framework's copies leave off, without which `Quotation` claims `Quotation Item` drafts.
 
 ### The creatable has no route
 
@@ -30,15 +49,27 @@ on `match` instead.
 
 ### Known gaps
 
-Quick Entry doctypes never earn a score. `frappe.new_doc` opens a dialog instead of routing
-when the doctype has `quick_entry` set (`create_new.js` → `quick_entry.js`), so Customer,
-Item and Contact produce no route to record. Quotation, Sales Invoice and the rest of the
-transactional doctypes route to a full form and work. Fixing it would mean recording from
-somewhere other than the router, which is a bigger change than the gap deserves for now.
+Quick Entry doctypes are scored, but biased. `frappe.new_doc` opens a dialog rather than
+routing when the doctype has `quick_entry` set (`create_new.js` → `quick_entry.js`), and
+the dialog never touches the router — but "Edit Full Form" inside it calls `set_route`
+with the draft's own name, so Customer and Item score only on the times you escaped the
+dialog. That is a worse signal than no signal, because it looks like the others. Recording
+from somewhere other than the router would fix it, and is a bigger change than this
+deserves for now.
 
 An abandoned draft counts the same as a saved one. That is intended — the signal is "how
 often do you come here to create one of these", not "how many did you create" — but it
 does mean a doctype whose form is opened and closed repeatedly ranks as if it were used.
+
+Reloading a draft form counts twice. `formview.js` mints a fresh draft name and re-routes
+when it lands on a `new-…` route whose document is not in `locals`, and the first router
+change has already fired by then. One refresh is two visits, under two names that both
+fold to the same key.
+
+Drafts cost cardinality, not rows. Retention bounds the table either way, but every draft
+is a permanent singleton group for the framework's own `group_by route` query, and eats
+into the `MAX_SAMPLED_VISITS` window this app samples. Worth watching if a site turns out
+to open far more drafts than pages.
 
 ## 2026-08-28 — Recording visits the framework refuses to record
 
