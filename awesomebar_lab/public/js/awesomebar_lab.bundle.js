@@ -336,27 +336,29 @@ awesomebar_lab.memory = {
 	recall(query) {
 		const normalized_query = this.normalize(query);
 		const memory = this.load();
+		const threshold = tuning("memory_min_confidence");
 
-		// The pick was recorded when the query was usually shorter than what's typed
-		// by now, so the longest stored prefix of the current query wins.
+		// The pick was recorded when the query was usually shorter than what's typed by now,
+		// so the longest stored prefix of the current query wins. A prefix that is stored but
+		// not yet trusted is skipped rather than taken as an answer: typing one more letter
+		// must not drop a pin the shorter query still earns.
 		for (let length = normalized_query.length; length >= 2; length--) {
-			const entry = memory[MEMORY_KEY_PREFIX + normalized_query.slice(0, length)];
-			if (entry) {
-				const confidence = this.confidence(entry);
-				const trusted = confidence > tuning("memory_min_confidence");
-				if (debug_enabled) {
-					const via =
-						length === normalized_query.length
-							? "exact match"
-							: `prefix "${normalized_query.slice(0, length)}"`;
-					console.log(
-						`[awesomebar_lab] recall "${normalized_query}" → "${entry.value}" ` +
-							`(${via}, confidence ${confidence.toFixed(2)}) — ` +
-							(trusted ? "pinning it" : "too weak, ignored")
-					);
-				}
-				return trusted ? entry.value : null;
+			const prefix = normalized_query.slice(0, length);
+			const entry = memory[MEMORY_KEY_PREFIX + prefix];
+			if (!entry) continue;
+
+			const confidence = this.confidence(entry);
+			const trusted = confidence > threshold;
+			if (debug_enabled) {
+				const via =
+					length === normalized_query.length ? "exact match" : `prefix "${prefix}"`;
+				console.log(
+					`[awesomebar_lab] recall "${normalized_query}" → "${entry.value}" ` +
+						`(${via}, confidence ${confidence.toFixed(2)}) — ` +
+						(trusted ? "pinning it" : "too weak, trying a shorter prefix")
+				);
 			}
+			if (trusted) return entry.value;
 		}
 		return null;
 	},
