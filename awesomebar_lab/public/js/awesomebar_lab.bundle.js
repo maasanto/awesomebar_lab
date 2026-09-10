@@ -31,6 +31,13 @@ function tuning(key) {
 // framework itself uses as tie-breakers.
 const RANK_EPSILON = 1e-6;
 
+// fuzzy_match starts every match at 100 and scores quality either side of it, so a top
+// score just above 100 puts the multiplicative cutoff under the pedestal and makes every
+// result a near-tie. Hold the band there — below it the top match is weak too, and the
+// plain fraction is the only thing left to measure against. Not a tuning knob: it is a
+// property of the framework's matcher, not of this ranking.
+const FUZZY_BASE_SCORE = 100;
+
 const MEMORY_KEY = "awesomebar_lab_selections";
 // Digit-only queries ("2024") would otherwise become integer-like object keys, which
 // JavaScript enumerates in numeric order before insertion order — silently breaking
@@ -176,7 +183,10 @@ awesomebar_lab.frecency = {
 		// Read before the loop below overwrites it, or the band is reported against
 		// whatever score landed on the first option instead of the best match.
 		const top_score = options[0].index;
-		const cutoff = top_score * band;
+		const cutoff =
+			top_score > FUZZY_BASE_SCORE
+				? Math.max(top_score * band, FUZZY_BASE_SCORE)
+				: top_score * band;
 		const near_ties = options.filter((option) => option.index >= cutoff);
 		const scores_to_share = near_ties.map((option) => option.index);
 
