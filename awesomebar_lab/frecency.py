@@ -14,12 +14,22 @@ from frappe.query_builder.functions import Cast_, Count
 # still in the table, so cutting retention to around one half-life quietly turns this
 # back into a raw visit count.
 TUNING_DEFAULTS = {
-	# Settled at 0.7 in real use: 0.85 was narrow enough that history rarely got to decide
-	# anything, since two results that close on fuzzy score are usually the same doctype.
+	# How close to the best match a result must score to be reordered by history at all.
+	# 1 reorders nothing, 0.5 reorders half the list. Settled at 0.7 in real use: 0.85 was
+	# narrow enough that history rarely got to decide anything, since two results that
+	# close on fuzzy score are usually the same doctype anyway.
 	"frecency_band": 0.7,
+	# How long a visit keeps half its weight. Shorter favours what was opened this week,
+	# longer favours what is opened most overall.
 	"frecency_half_life_days": 14.0,
+	# How many of the user's top routes ride along with boot. Anything past this ranks as
+	# never visited, so it trades boot payload against how deep the ranking can reach.
 	"boot_link_limit": 30,
+	# How confident a remembered pick must be before it is pinned. Below about 0.67 a
+	# single pick already pins; raise it to demand a repeated habit.
 	"memory_min_confidence": 0.65,
+	# How long a remembered pick keeps half its weight once its query goes unused, which
+	# is what lets a one-off fade instead of needing a contradicting pick to clear it.
 	"memory_half_life_days": 14.0,
 }
 

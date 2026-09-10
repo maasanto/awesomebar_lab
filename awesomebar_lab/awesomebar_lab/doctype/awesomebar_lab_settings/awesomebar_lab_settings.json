@@ -23,7 +23,7 @@
    "label": "Frecency Ranking"
   },
   {
-   "default": "0.85",
+   "default": "0.7",
    "description": "Results scoring within this fraction of the best match are treated as near-ties and reordered by your history. 1 reorders nothing, 0.5 reorders half the list — lower it to let history win more often.",
    "fieldname": "frecency_band",
    "fieldtype": "Float",
@@ -75,7 +75,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-21 09:00:00.000000",
+ "modified": "2026-09-10 15:12:04.771839",
  "modified_by": "Administrator",
  "module": "Awesomebar Lab",
  "name": "Awesomebar Lab Settings",
