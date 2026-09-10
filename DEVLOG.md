@@ -67,9 +67,9 @@ change has already fired by then. One refresh is two visits, under two names tha
 fold to the same key.
 
 Drafts cost cardinality, not rows. Retention bounds the table either way, but every draft
-is a permanent singleton group for the framework's own `group_by route` query, and eats
-into the `MAX_SAMPLED_VISITS` window this app samples. Worth watching if a site turns out
-to open far more drafts than pages.
+is a permanent singleton group for the framework's own `group_by route` query, and one more
+row-per-day group for the aggregate this app reads. Worth watching if a site turns out to
+open far more drafts than pages.
 
 ## 2026-08-28 — Recording visits the framework refuses to record
 
