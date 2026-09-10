@@ -9,7 +9,7 @@ frappe.provide("awesomebar_lab");
 const TUNING_FALLBACKS = {
 	// Results scoring within this fraction of the best match are close enough that
 	// personal history, not the fuzzy score, should decide their order.
-	frecency_band: 0.85,
+	frecency_band: 0.7,
 	// Low enough that a single pick already pins, the way Raycast and Alfred learn. What
 	// makes that safe is the decay: a one-off fades in about three idle days, while a
 	// habit worth keeping lasts weeks.

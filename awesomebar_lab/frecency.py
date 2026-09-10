@@ -14,7 +14,9 @@ from frappe.query_builder.functions import Cast_, Count
 # still in the table, so cutting retention to around one half-life quietly turns this
 # back into a raw visit count.
 TUNING_DEFAULTS = {
-	"frecency_band": 0.85,
+	# Settled at 0.7 in real use: 0.85 was narrow enough that history rarely got to decide
+	# anything, since two results that close on fuzzy score are usually the same doctype.
+	"frecency_band": 0.7,
 	"frecency_half_life_days": 14.0,
 	"boot_link_limit": 30,
 	"memory_min_confidence": 0.65,
