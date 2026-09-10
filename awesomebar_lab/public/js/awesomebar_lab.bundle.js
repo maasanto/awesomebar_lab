@@ -9,7 +9,7 @@ frappe.provide("awesomebar_lab");
 const TUNING_FALLBACKS = {
 	// Results scoring within this fraction of the best match are close enough that
 	// personal history, not the fuzzy score, should decide their order.
-	frecency_band: 0.85,
+	frecency_band: 0.7,
 	// Low enough that a single pick already pins, the way Raycast and Alfred learn. What
 	// makes that safe is the decay: a one-off fades in about three idle days, while a
 	// habit worth keeping lasts weeks.
@@ -30,6 +30,13 @@ function tuning(key) {
 // kept the top score, and renders behind them. Kept far below the 0.01 offsets the
 // framework itself uses as tie-breakers.
 const RANK_EPSILON = 1e-6;
+
+// fuzzy_match starts every match at 100 and scores quality either side of it, so a top
+// score just above 100 puts the multiplicative cutoff under the pedestal and makes every
+// result a near-tie. Hold the band there — below it the top match is weak too, and the
+// plain fraction is the only thing left to measure against. Not a tuning knob: it is a
+// property of the framework's matcher, not of this ranking.
+const FUZZY_BASE_SCORE = 100;
 
 const MEMORY_KEY = "awesomebar_lab_selections";
 // Digit-only queries ("2024") would otherwise become integer-like object keys, which
@@ -93,6 +100,31 @@ function new_document_key(doctype) {
 
 awesomebar_lab.frecency = {
 	scores: null,
+	refreshed: false,
+
+	/** The scored links the ranking reads. */
+	links() {
+		return frappe.boot.awesomebar_lab_frecency || [];
+	},
+
+	/**
+	 * Bootinfo is cached per user with no expiry, so the scores it carries are as old as
+	 * the session and decay never moves them — the whole point of scoring by recency.
+	 * Re-read them once per page load, when the bar is first opened.
+	 */
+	refresh() {
+		if (this.refreshed) return;
+		this.refreshed = true;
+		frappe.xcall("awesomebar_lab.frecency.frequently_visited_links").then((links) => {
+			frappe.boot.awesomebar_lab_frecency = links;
+			this.load();
+			if (debug_enabled) {
+				console.log(
+					`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
+				);
+			}
+		});
+	},
 
 	/**
 	 * Route History stores the visited route ("List/Sales Invoice/List") while
@@ -109,7 +141,7 @@ awesomebar_lab.frecency = {
 	// to one key, and they are the same page as far as ranking goes.
 	load() {
 		this.scores = {};
-		(frappe.boot.awesomebar_lab_frecency || []).forEach((link) => {
+		this.links().forEach((link) => {
 			const key = this.route_key(link.route);
 			this.scores[key] = (this.scores[key] || 0) + link.score;
 		});
@@ -151,7 +183,10 @@ awesomebar_lab.frecency = {
 		// Read before the loop below overwrites it, or the band is reported against
 		// whatever score landed on the first option instead of the best match.
 		const top_score = options[0].index;
-		const cutoff = top_score * band;
+		const cutoff =
+			top_score > FUZZY_BASE_SCORE
+				? Math.max(top_score * band, FUZZY_BASE_SCORE)
+				: top_score * band;
 		const near_ties = options.filter((option) => option.index >= cutoff);
 		const scores_to_share = near_ties.map((option) => option.index);
 
@@ -235,13 +270,19 @@ awesomebar_lab.memory = {
 		return `${MEMORY_KEY}:${frappe.session.user}`;
 	},
 
+	// Read once and kept in memory: recall runs on every keystroke, and re-parsing the
+	// whole store that often is work no keystroke should pay for.
+	cache: null,
+
 	load() {
+		if (this.cache) return this.cache;
 		try {
-			return JSON.parse(localStorage.getItem(this.storage_key())) || {};
+			this.cache = JSON.parse(localStorage.getItem(this.storage_key())) || {};
 		} catch (e) {
 			// Corrupted storage: starting over only costs relearning a few picks.
-			return {};
+			this.cache = {};
 		}
+		return this.cache;
 	},
 
 	/**
@@ -311,27 +352,29 @@ awesomebar_lab.memory = {
 	recall(query) {
 		const normalized_query = this.normalize(query);
 		const memory = this.load();
+		const threshold = tuning("memory_min_confidence");
 
-		// The pick was recorded when the query was usually shorter than what's typed
-		// by now, so the longest stored prefix of the current query wins.
+		// The pick was recorded when the query was usually shorter than what's typed by now,
+		// so the longest stored prefix of the current query wins. A prefix that is stored but
+		// not yet trusted is skipped rather than taken as an answer: typing one more letter
+		// must not drop a pin the shorter query still earns.
 		for (let length = normalized_query.length; length >= 2; length--) {
-			const entry = memory[MEMORY_KEY_PREFIX + normalized_query.slice(0, length)];
-			if (entry) {
-				const confidence = this.confidence(entry);
-				const trusted = confidence > tuning("memory_min_confidence");
-				if (debug_enabled) {
-					const via =
-						length === normalized_query.length
-							? "exact match"
-							: `prefix "${normalized_query.slice(0, length)}"`;
-					console.log(
-						`[awesomebar_lab] recall "${normalized_query}" → "${entry.value}" ` +
-							`(${via}, confidence ${confidence.toFixed(2)}) — ` +
-							(trusted ? "pinning it" : "too weak, ignored")
-					);
-				}
-				return trusted ? entry.value : null;
+			const prefix = normalized_query.slice(0, length);
+			const entry = memory[MEMORY_KEY_PREFIX + prefix];
+			if (!entry) continue;
+
+			const confidence = this.confidence(entry);
+			const trusted = confidence > threshold;
+			if (debug_enabled) {
+				const via =
+					length === normalized_query.length ? "exact match" : `prefix "${prefix}"`;
+				console.log(
+					`[awesomebar_lab] recall "${normalized_query}" → "${entry.value}" ` +
+						`(${via}, confidence ${confidence.toFixed(2)}) — ` +
+						(trusted ? "pinning it" : "too weak, trying a shorter prefix")
+				);
 			}
+			if (trusted) return entry.value;
 		}
 		return null;
 	},
@@ -391,7 +434,9 @@ function add_history_marker(option) {
 
 	option.label = `${
 		option.label || option.value
-	}<span class="ml-2" style="--icon-stroke: var(--text-muted)" title="${reason}">${icon}</span>`;
+	}<span class="ml-2" style="--icon-stroke: var(--text-muted)" title="${frappe.utils.escape_html(
+		reason
+	)}">${icon}</span>`;
 }
 
 frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
@@ -461,6 +506,9 @@ frappe.router.on("change", () => {
 	});
 	flush_unrecorded_visits();
 });
+
+// focusin rather than focus, which does not bubble and so cannot be delegated.
+$(document).on("focusin", "#navbar-search", () => awesomebar_lab.frecency.refresh());
 
 // Delegated rather than bound to the input: the framework clears the field inside its
 // own select handler, so by the time this bubbles up there is nothing left to read.

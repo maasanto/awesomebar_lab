@@ -2,9 +2,10 @@
 # For license information, please see license.txt
 
 from collections import Counter
-from datetime import datetime
+from datetime import date
 
 import frappe
+from frappe.query_builder.functions import Cast_, Count
 
 # Every value here is overridable from Awesomebar Lab Settings while the ranking is
 # being tuned; the shipped feature will inline whatever these settle on and drop the
@@ -13,17 +14,26 @@ import frappe
 # still in the table, so cutting retention to around one half-life quietly turns this
 # back into a raw visit count.
 TUNING_DEFAULTS = {
-	"frecency_band": 0.85,
+	# How close to the best match a result must score to be reordered by history at all.
+	# 1 reorders nothing, 0.5 reorders half the list. Settled at 0.7 in real use: 0.85 was
+	# narrow enough that history rarely got to decide anything, since two results that
+	# close on fuzzy score are usually the same doctype anyway.
+	"frecency_band": 0.7,
+	# How long a visit keeps half its weight. Shorter favours what was opened this week,
+	# longer favours what is opened most overall.
 	"frecency_half_life_days": 14.0,
+	# How many of the user's top routes ride along with boot. Anything past this ranks as
+	# never visited, so it trades boot payload against how deep the ranking can reach.
 	"boot_link_limit": 30,
+	# How confident a remembered pick must be before it is pinned. Below about 0.67 a
+	# single pick already pins; raise it to demand a repeated habit.
 	"memory_min_confidence": 0.65,
+	# How long a remembered pick keeps half its weight once its query goes unused, which
+	# is what lets a one-off fade instead of needing a contradicting pick to clear it.
 	"memory_half_life_days": 14.0,
 }
 
 MAX_LINKS = 50
-# Beyond this many visits the oldest ones are dropped: after a few half-lives they
-# contribute almost nothing, and boot must not pay for an unpruned history.
-MAX_SAMPLED_VISITS = 10_000
 
 
 def get_tuning() -> dict:
@@ -66,7 +76,28 @@ def visit_key(route: str) -> str:
 	return route
 
 
-def score_visits(visits: list[dict], now: datetime, half_life_days: float) -> Counter:
+def daily_visits(user: str) -> list[dict]:
+	"""One row per route per day, rather than one per visit.
+
+	Grouping in SQL is what keeps this affordable: over the 90-day retention window a
+	busy user accumulates tens of thousands of rows, and the decay only needs to know how
+	many visits landed on each day. Day granularity is ample against a half life measured
+	in weeks.
+	"""
+	table = frappe.qb.DocType("Route History")
+	return (
+		frappe.qb.from_(table)
+		.select(
+			table.route,
+			Cast_(table.creation, "date", alias="day"),
+			Count("*").as_("count"),
+		)
+		.where(table.user == user)
+		.groupby(table.route, Cast_(table.creation, "date"))
+	).run(as_dict=True)
+
+
+def score_visits(visits: list[dict], today: date, half_life_days: float) -> Counter:
 	"""Score each route by how much *and* how recently it was visited.
 
 	A visit is worth 1 point on the day it happens and half that after every
@@ -75,10 +106,10 @@ def score_visits(visits: list[dict], now: datetime, half_life_days: float) -> Co
 	"""
 	scores = Counter()
 	for visit in visits:
-		# Timestamps come from the browser clock via deferred_insert, so a visit can
-		# sit ahead of server time — it must never be worth more than one from right now.
-		age_days = max(0, (now - visit["creation"]).total_seconds() / 86400)
-		scores[visit_key(visit["route"])] += 0.5 ** (age_days / half_life_days)
+		# Timestamps come from the browser clock via deferred_insert, so a visit can sit
+		# ahead of server time — it must never be worth more than one from today.
+		age_days = max(0, (today - visit["day"]).days)
+		scores[visit_key(visit["route"])] += visit["count"] * 0.5 ** (age_days / half_life_days)
 	return scores
 
 
@@ -95,16 +126,9 @@ def frequently_visited_links(limit: int | None = None) -> list[dict]:
 	tuning = get_tuning()
 	limit = min(max(frappe.utils.cint(limit or tuning["boot_link_limit"]), 1), MAX_LINKS)
 
-	# Decayed in Python rather than in SQL to stay portable across MariaDB and
-	# Postgres. Move the decay into the query if boot latency ever shows up.
-	visits = frappe.get_all(
-		"Route History",
-		fields=["route", "creation"],
-		filters={"user": frappe.session.user},
-		order_by="creation desc",
-		limit=MAX_SAMPLED_VISITS,
-	)
-	scores = score_visits(visits, frappe.utils.now_datetime(), tuning["frecency_half_life_days"])
+	# Decayed in Python rather than in SQL to stay portable across MariaDB and Postgres.
+	visits = daily_visits(frappe.session.user)
+	scores = score_visits(visits, frappe.utils.now_datetime().date(), tuning["frecency_half_life_days"])
 
 	return [{"route": route, "score": round(score, 3)} for route, score in scores.most_common(limit)]
 

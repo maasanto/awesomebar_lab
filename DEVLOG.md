@@ -67,9 +67,9 @@ change has already fired by then. One refresh is two visits, under two names tha
 fold to the same key.
 
 Drafts cost cardinality, not rows. Retention bounds the table either way, but every draft
-is a permanent singleton group for the framework's own `group_by route` query, and eats
-into the `MAX_SAMPLED_VISITS` window this app samples. Worth watching if a site turns out
-to open far more drafts than pages.
+is a permanent singleton group for the framework's own `group_by route` query, and one more
+row-per-day group for the aggregate this app reads. Worth watching if a site turns out to
+open far more drafts than pages.
 
 ## 2026-08-28 — Recording visits the framework refuses to record
 
@@ -162,6 +162,11 @@ through unchecked, so a Page the user has since lost access to would resurface i
 framework's suggestions. This app is unaffected — it re-checks `page_info`, which boot
 already permission-filters — but upstream may want the same check.
 
+Settled: the core port now permission-checks `Form/` and `New/` routes, because singles
+skew privileged and the framework's list is rendered as navigable links. It stays out of
+this app, where the scores only ever reorder results the awesome bar already produced and
+permission-checked, so a route the user cannot open simply never matches anything.
+
 ### When it lands
 
 Delete the listener, `is_fixed_destination`, and the flush helper from
@@ -176,3 +181,31 @@ start failing and every visit is counted twice.
 
 Verify by opening a desk Page and a single, waiting out the debounce, and confirming a
 `Route History` row for `bank-reconciliation` and for `Form/Bank Clearance/Bank Clearance`.
+
+## What came back from the core review
+
+Four defects found while porting this to `frappe/frappe` were real here too, and are now
+fixed in both.
+
+The scores were dead on arrival. Bootinfo is cached per user with no expiry, so the decay
+was computed once at boot-cache creation and never moved again — a session left open for a
+week ranked on week-old scores. `awesomebar_lab.frecency.refresh()` re-reads them once,
+when the bar is first focused, which is also the only place they are used.
+
+Boot paid for a window of up to 10,000 raw rows. `daily_visits` now groups by route and day
+in SQL, so the cost is bounded by distinct routes times retention days rather than by visit
+count, and day granularity is ample against a half life measured in weeks. Verified against
+the previous per-visit implementation: identical scores, 42 visits collapsing to 4 rows.
+
+`recall` walked prefixes but stopped at the first *stored* one, so a half-formed entry for
+`salei` could veto a settled pin on `sal` — typing one more letter dropped a pin the shorter
+query still earned. It now skips untrusted prefixes and keeps looking.
+
+`memory.load()` re-read and re-parsed the whole store on every keystroke, via `recall`. It
+is cached in memory now and written through on `record`.
+
+Also picked up from the core branch: the near-tie cutoff is held at `FUZZY_BASE_SCORE` when
+the top score sits just above 100, or a weak best match makes every result a near-tie.
+
+Deliberately not ported: the permission filter (see above), and the framework's own
+`get_frequent_links` ordering fix, which this app does not touch.
