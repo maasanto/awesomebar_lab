@@ -434,7 +434,9 @@ function add_history_marker(option) {
 
 	option.label = `${
 		option.label || option.value
-	}<span class="ml-2" style="--icon-stroke: var(--text-muted)" title="${reason}">${icon}</span>`;
+	}<span class="ml-2" style="--icon-stroke: var(--text-muted)" title="${frappe.utils.escape_html(
+		reason
+	)}">${icon}</span>`;
 }
 
 frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {

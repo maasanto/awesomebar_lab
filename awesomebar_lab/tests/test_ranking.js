@@ -68,7 +68,11 @@ function rank(query, remembered) {
 				],
 			},
 			session: { user: "Administrator" },
-			utils: { icon: () => "<history-icon/>", debounce: (fn) => fn },
+			utils: {
+				icon: () => "<history-icon/>",
+				debounce: (fn) => fn,
+				escape_html: (text) => text,
+			},
 			router: { on: () => {} },
 			search: {
 				AwesomeBar: class {
