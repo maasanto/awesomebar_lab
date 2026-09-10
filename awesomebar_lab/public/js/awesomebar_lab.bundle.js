@@ -93,6 +93,31 @@ function new_document_key(doctype) {
 
 awesomebar_lab.frecency = {
 	scores: null,
+	refreshed: false,
+
+	/** The scored links the ranking reads. */
+	links() {
+		return frappe.boot.awesomebar_lab_frecency || [];
+	},
+
+	/**
+	 * Bootinfo is cached per user with no expiry, so the scores it carries are as old as
+	 * the session and decay never moves them — the whole point of scoring by recency.
+	 * Re-read them once per page load, when the bar is first opened.
+	 */
+	refresh() {
+		if (this.refreshed) return;
+		this.refreshed = true;
+		frappe.xcall("awesomebar_lab.frecency.frequently_visited_links").then((links) => {
+			frappe.boot.awesomebar_lab_frecency = links;
+			this.load();
+			if (debug_enabled) {
+				console.log(
+					`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
+				);
+			}
+		});
+	},
 
 	/**
 	 * Route History stores the visited route ("List/Sales Invoice/List") while
@@ -109,7 +134,7 @@ awesomebar_lab.frecency = {
 	// to one key, and they are the same page as far as ranking goes.
 	load() {
 		this.scores = {};
-		(frappe.boot.awesomebar_lab_frecency || []).forEach((link) => {
+		this.links().forEach((link) => {
 			const key = this.route_key(link.route);
 			this.scores[key] = (this.scores[key] || 0) + link.score;
 		});
@@ -461,6 +486,9 @@ frappe.router.on("change", () => {
 	});
 	flush_unrecorded_visits();
 });
+
+// focusin rather than focus, which does not bubble and so cannot be delegated.
+$(document).on("focusin", "#navbar-search", () => awesomebar_lab.frecency.refresh());
 
 // Delegated rather than bound to the input: the framework clears the field inside its
 // own select handler, so by the time this bubbles up there is nothing left to read.
