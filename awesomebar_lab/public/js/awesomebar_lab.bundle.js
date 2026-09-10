@@ -260,13 +260,19 @@ awesomebar_lab.memory = {
 		return `${MEMORY_KEY}:${frappe.session.user}`;
 	},
 
+	// Read once and kept in memory: recall runs on every keystroke, and re-parsing the
+	// whole store that often is work no keystroke should pay for.
+	cache: null,
+
 	load() {
+		if (this.cache) return this.cache;
 		try {
-			return JSON.parse(localStorage.getItem(this.storage_key())) || {};
+			this.cache = JSON.parse(localStorage.getItem(this.storage_key())) || {};
 		} catch (e) {
 			// Corrupted storage: starting over only costs relearning a few picks.
-			return {};
+			this.cache = {};
 		}
+		return this.cache;
 	},
 
 	/**
