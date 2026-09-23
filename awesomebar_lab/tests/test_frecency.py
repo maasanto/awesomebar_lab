@@ -3,9 +3,16 @@
 
 from datetime import date, timedelta
 
-from frappe.tests import UnitTestCase
+import frappe
+from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from awesomebar_lab.frecency import TUNING_DEFAULTS, score_visits, visit_key
+from awesomebar_lab.frecency import (
+	TUNING_DEFAULTS,
+	frequently_visited_links,
+	score_visits,
+	scoring_window_days,
+	visit_key,
+)
 
 TODAY = date(2026, 7, 30)
 HALF_LIFE_DAYS = TUNING_DEFAULTS["frecency_half_life_days"]
@@ -68,6 +75,15 @@ class TestScoreVisits(UnitTestCase):
 		self.assertEqual(list(scores), ["New/Sales Invoice"])
 		self.assertAlmostEqual(scores["New/Sales Invoice"], 2.0)
 
+	def test_a_day_read_back_as_text_is_aged_like_a_date(self):
+		"""sqlite's DATE() returns a string, where the other backends return a date."""
+		bucket = visits("List/Item/List", 1, HALF_LIFE_DAYS)
+		bucket[0]["day"] = bucket[0]["day"].isoformat()
+
+		scores = score_visits(bucket, TODAY, HALF_LIFE_DAYS)
+
+		self.assertAlmostEqual(scores["List/Item/List"], 0.5)
+
 
 class TestVisitKey(UnitTestCase):
 	def test_a_stored_document_keeps_its_own_route(self):
@@ -93,3 +109,33 @@ class TestVisitKey(UnitTestCase):
 	def test_other_routes_pass_through_untouched(self):
 		self.assertEqual(visit_key("List/Sales Invoice/List"), "List/Sales Invoice/List")
 		self.assertEqual(visit_key("bank-reconciliation"), "bank-reconciliation")
+
+
+class TestFrequentlyVisitedLinks(IntegrationTestCase):
+	def setUp(self):
+		frappe.db.delete("Route History", {"user": frappe.session.user})
+
+	def visit(self, route: str):
+		return frappe.get_doc(
+			{"doctype": "Route History", "route": route, "user": frappe.session.user}
+		).insert()
+
+	def test_days_are_bucketed_on_this_backend(self):
+		"""A day read back as anything but that day (sqlite's CAST returns the year) would
+		age every visit by centuries and score it as nothing."""
+		self.visit("List/Note/List")
+
+		self.assertAlmostEqual(frequently_visited_links()[0]["score"], 1.0)
+
+	def test_visits_older_than_the_scoring_window_are_left_out(self):
+		"""They are worth under 1% of a visit from today, so all they can cost is the scan
+		— and on a site that never trims Route History they would be the bulk of it."""
+		self.visit("List/Note/List")
+		stale = self.visit("List/ToDo/List")
+		stale.db_set(
+			"creation",
+			frappe.utils.add_days(frappe.utils.nowdate(), -scoring_window_days(HALF_LIFE_DAYS) - 1),
+			update_modified=False,
+		)
+
+		self.assertEqual([link["route"] for link in frequently_visited_links()], ["List/Note/List"])

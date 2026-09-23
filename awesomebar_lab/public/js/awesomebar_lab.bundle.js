@@ -115,15 +115,25 @@ awesomebar_lab.frecency = {
 	refresh() {
 		if (this.refreshed) return;
 		this.refreshed = true;
-		frappe.xcall("awesomebar_lab.frecency.frequently_visited_links").then((links) => {
-			frappe.boot.awesomebar_lab_frecency = links;
-			this.load();
-			if (debug_enabled) {
-				console.log(
-					`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
-				);
-			}
-		});
+		// Silent: a failure here must not pop a dialog just because the search box got
+		// focus. The boot copy keeps ranking in the meantime, and the next focus retries.
+		frappe
+			.xcall("awesomebar_lab.frecency.frequently_visited_links", {}, "POST", {
+				silent: true,
+			})
+			.then((links) => {
+				frappe.boot.awesomebar_lab_frecency = links;
+				this.load();
+				if (debug_enabled) {
+					console.log(
+						`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
+					);
+				}
+			})
+			.catch((error) => {
+				this.refreshed = false;
+				console.warn("[awesomebar_lab] could not refresh the visit history", error);
+			});
 	},
 
 	/**
@@ -296,11 +306,15 @@ awesomebar_lab.memory = {
 	 * timestamp per pick would grow the payload to sharpen a tie-breaker.
 	 */
 	confidence(entry) {
+		const weight = this.fade(entry);
+		return (entry.hits * weight + 1) / ((entry.hits + entry.misses) * weight + 2);
+	},
+
+	fade(entry) {
 		const idle_days = entry.last_used
 			? (Date.now() - entry.last_used) / (24 * 60 * 60 * 1000)
 			: 0;
-		const weight = 0.5 ** (idle_days / tuning("memory_half_life_days"));
-		return (entry.hits * weight + 1) / ((entry.hits + entry.misses) * weight + 2);
+		return 0.5 ** (idle_days / tuning("memory_half_life_days"));
 	},
 
 	record(query, value) {
@@ -312,12 +326,19 @@ awesomebar_lab.memory = {
 		const entry = memory[stored_key];
 		let updated;
 
-		if (!entry || (entry.value !== value && entry.misses + 1 >= entry.hits)) {
+		// Faded before they are weighed and stored: the write below resets last_used, so
+		// raw counts would revive an expired pin at full strength on the very pick that
+		// contradicts it.
+		const weight = entry ? this.fade(entry) : 1;
+		const hits = entry ? entry.hits * weight : 0;
+		const misses = entry ? entry.misses * weight : 0;
+
+		if (!entry || (entry.value !== value && misses + 1 >= hits)) {
 			updated = { value: value, hits: 1, misses: 0 };
 		} else if (entry.value === value) {
-			updated = { ...entry, hits: entry.hits + 1 };
+			updated = { value: value, hits: hits + 1, misses: misses };
 		} else {
-			updated = { ...entry, misses: entry.misses + 1 };
+			updated = { value: entry.value, hits: hits, misses: misses + 1 };
 		}
 
 		// Reinserting moves the key to the end of the iteration order, so the eviction
@@ -339,9 +360,9 @@ awesomebar_lab.memory = {
 			const threshold = tuning("memory_min_confidence");
 			console.log(
 				`[awesomebar_lab] remembered "${normalized_query}" → "${updated.value}" ` +
-					`(${updated.hits} hit(s), ${
-						updated.misses
-					} miss(es), confidence ${confidence.toFixed(2)}) — ` +
+					`(${+updated.hits.toFixed(2)} hit(s), ${+updated.misses.toFixed(
+						2
+					)} miss(es) after fading, confidence ${confidence.toFixed(2)}) — ` +
 					(confidence > threshold
 						? "will be pinned for this query"
 						: `below the ${threshold} threshold, not pinned yet`)
@@ -382,9 +403,10 @@ awesomebar_lab.memory = {
 	/**
 	 * Scores the result this user keeps picking for this exact query above every
 	 * other match. Only touches what the search already matched, so a remembered
-	 * choice never reappears once it stops matching what is being typed.
+	 * choice never reappears once it stops matching what is being typed. `rivals` are the
+	 * results already on the list that it must also outrank, like "Search for …".
 	 */
-	pin(options, query) {
+	pin(options, query, rivals = []) {
 		const remembered = this.recall(query);
 		if (!remembered) return;
 
@@ -403,7 +425,7 @@ awesomebar_lab.memory = {
 			return;
 		}
 
-		const top_index = Math.max(...options.map((option) => option.index)) + 1;
+		const top_index = Math.max(...options.concat(rivals).map((option) => option.index)) + 1;
 		pinned.forEach((option) => {
 			option.index = top_index;
 			option.boosted_by_history = true;
@@ -444,9 +466,10 @@ frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
 		const options = super.build_options(txt);
 
 		// The rerank wants the array sorted by index, which is how the framework
-		// returns it; the pin outranks the rerank.
+		// returns it; the pin outranks the rerank, and the defaults the framework has
+		// already put on the list.
 		const log_trace = awesomebar_lab.frecency.rerank(options);
-		awesomebar_lab.memory.pin(options, txt);
+		awesomebar_lab.memory.pin(options, txt, this.options);
 		options.forEach(add_history_marker);
 		if (log_trace) log_trace();
 

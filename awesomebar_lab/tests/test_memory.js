@@ -82,4 +82,22 @@ memory.pin(options, "achat");
 assert.equal(options[0].pinned_for_query, undefined);
 assert.equal(options[0].index, 240);
 
+// A contradicting pick on a habit that has long expired must replace it, not revive it:
+// the write resets last_used, so weighing raw counts would pin the old pick at full strength.
+memory.load()["q:inv"] = {
+	value: "Liste : Sales Invoice",
+	hits: 5,
+	misses: 0,
+	last_used: Date.now() - 60 * 24 * 60 * 60 * 1000,
+};
+memory.record("inv", "Invoice Discounting");
+assert.equal(memory.recall("inv"), "Invoice Discounting");
+
+// A pin must also clear the results the framework put on the list before its own matches,
+// like "Search for …" at 100, or it is pinned in name only.
+memory.record("cust", "Liste : Customer");
+const matches = [{ value: "Liste : Customer", index: 95 }];
+memory.pin(matches, "cust", [{ value: "Search for cust", index: 100 }]);
+assert.ok(matches[0].index > 100, `pin should outrank the defaults, got ${matches[0].index}`);
+
 console.log("remembered picks survive a longer query, persist, and expire when idle");

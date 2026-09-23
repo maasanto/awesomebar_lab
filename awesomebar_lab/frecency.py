@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date
 
 import frappe
-from frappe.query_builder.functions import Cast_, Count
+from frappe.query_builder.functions import Cast_, Count, Date
 
 # Every value here is overridable from Awesomebar Lab Settings while the ranking is
 # being tuned; the shipped feature will inline whatever these settle on and drop the
@@ -76,7 +76,24 @@ def visit_key(route: str) -> str:
 	return route
 
 
-def daily_visits(user: str) -> list[dict]:
+def day_of(creation):
+	"""A timestamp's calendar day, spelled the way each backend understands.
+
+	Postgres has no DATE(); sqlite has no date type, so CAST(x AS DATE) is a numeric cast
+	there and returns the year rather than a day. The framework's own query builder only
+	grew a portable function for this on develop, which the versions this app supports lack.
+	"""
+	return Cast_(creation, "date") if frappe.db.db_type == "postgres" else Date(creation)
+
+
+def scoring_window_days(half_life_days: float) -> int:
+	"""Seven half-lives, so a visit left out was worth under 1% of one from today and could
+	not have changed an order. Deliberately wider than the default retention window: what it
+	bounds is the site that keeps Route History for a year, or forever."""
+	return round(7 * half_life_days)
+
+
+def daily_visits(user: str, window_days: int) -> list[dict]:
 	"""One row per route per day, rather than one per visit.
 
 	Grouping in SQL is what keeps this affordable: over the 90-day retention window a
@@ -85,15 +102,19 @@ def daily_visits(user: str) -> list[dict]:
 	in weeks.
 	"""
 	table = frappe.qb.DocType("Route History")
+	# Compared against a plain string rather than the backend's NOW(): sqlite has no such
+	# function, and a date-only bound matches the day granularity below anyway.
+	oldest_scored_day = frappe.utils.add_to_date(days=-window_days, as_string=True)
 	return (
 		frappe.qb.from_(table)
 		.select(
 			table.route,
-			Cast_(table.creation, "date", alias="day"),
+			day_of(table.creation).as_("day"),
 			Count("*").as_("count"),
 		)
 		.where(table.user == user)
-		.groupby(table.route, Cast_(table.creation, "date"))
+		.where(table.creation >= oldest_scored_day)
+		.groupby(table.route, day_of(table.creation))
 	).run(as_dict=True)
 
 
@@ -108,7 +129,8 @@ def score_visits(visits: list[dict], today: date, half_life_days: float) -> Coun
 	for visit in visits:
 		# Timestamps come from the browser clock via deferred_insert, so a visit can sit
 		# ahead of server time — it must never be worth more than one from today.
-		age_days = max(0, (today - visit["day"]).days)
+		# sqlite's DATE() hands back a string where the other backends return a date.
+		age_days = max(0, (today - frappe.utils.getdate(visit["day"])).days)
 		scores[visit_key(visit["route"])] += visit["count"] * 0.5 ** (age_days / half_life_days)
 	return scores
 
@@ -126,9 +148,10 @@ def frequently_visited_links(limit: int | None = None) -> list[dict]:
 	tuning = get_tuning()
 	limit = min(max(frappe.utils.cint(limit or tuning["boot_link_limit"]), 1), MAX_LINKS)
 
-	# Decayed in Python rather than in SQL to stay portable across MariaDB and Postgres.
-	visits = daily_visits(frappe.session.user)
-	scores = score_visits(visits, frappe.utils.now_datetime().date(), tuning["frecency_half_life_days"])
+	# Decayed in Python rather than in SQL to stay portable across the backends.
+	half_life_days = tuning["frecency_half_life_days"]
+	visits = daily_visits(frappe.session.user, scoring_window_days(half_life_days))
+	scores = score_visits(visits, frappe.utils.now_datetime().date(), half_life_days)
 
 	return [{"route": route, "score": round(score, 3)} for route, score in scores.most_common(limit)]
 
