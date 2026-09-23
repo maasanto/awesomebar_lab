@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date
 
 import frappe
-from frappe.query_builder.functions import Cast_, Count
+from frappe.query_builder.functions import Cast_, Count, Date
 
 # Every value here is overridable from Awesomebar Lab Settings while the ranking is
 # being tuned; the shipped feature will inline whatever these settle on and drop the
@@ -76,6 +76,16 @@ def visit_key(route: str) -> str:
 	return route
 
 
+def day_of(creation):
+	"""A timestamp's calendar day, spelled the way each backend understands.
+
+	Postgres has no DATE(); sqlite has no date type, so CAST(x AS DATE) is a numeric cast
+	there and returns the year rather than a day. The framework's own query builder only
+	grew a portable function for this on develop, which the versions this app supports lack.
+	"""
+	return Cast_(creation, "date") if frappe.db.db_type == "postgres" else Date(creation)
+
+
 def daily_visits(user: str) -> list[dict]:
 	"""One row per route per day, rather than one per visit.
 
@@ -89,11 +99,11 @@ def daily_visits(user: str) -> list[dict]:
 		frappe.qb.from_(table)
 		.select(
 			table.route,
-			Cast_(table.creation, "date", alias="day"),
+			day_of(table.creation).as_("day"),
 			Count("*").as_("count"),
 		)
 		.where(table.user == user)
-		.groupby(table.route, Cast_(table.creation, "date"))
+		.groupby(table.route, day_of(table.creation))
 	).run(as_dict=True)
 
 
@@ -108,7 +118,8 @@ def score_visits(visits: list[dict], today: date, half_life_days: float) -> Coun
 	for visit in visits:
 		# Timestamps come from the browser clock via deferred_insert, so a visit can sit
 		# ahead of server time — it must never be worth more than one from today.
-		age_days = max(0, (today - visit["day"]).days)
+		# sqlite's DATE() hands back a string where the other backends return a date.
+		age_days = max(0, (today - frappe.utils.getdate(visit["day"])).days)
 		scores[visit_key(visit["route"])] += visit["count"] * 0.5 ** (age_days / half_life_days)
 	return scores
 
