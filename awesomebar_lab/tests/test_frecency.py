@@ -10,6 +10,7 @@ from awesomebar_lab.frecency import (
 	TUNING_DEFAULTS,
 	frequently_visited_links,
 	score_visits,
+	scoring_window_days,
 	visit_key,
 )
 
@@ -125,3 +126,16 @@ class TestFrequentlyVisitedLinks(IntegrationTestCase):
 		self.visit("List/Note/List")
 
 		self.assertAlmostEqual(frequently_visited_links()[0]["score"], 1.0)
+
+	def test_visits_older_than_the_scoring_window_are_left_out(self):
+		"""They are worth under 1% of a visit from today, so all they can cost is the scan
+		— and on a site that never trims Route History they would be the bulk of it."""
+		self.visit("List/Note/List")
+		stale = self.visit("List/ToDo/List")
+		stale.db_set(
+			"creation",
+			frappe.utils.add_days(frappe.utils.nowdate(), -scoring_window_days(HALF_LIFE_DAYS) - 1),
+			update_modified=False,
+		)
+
+		self.assertEqual([link["route"] for link in frequently_visited_links()], ["List/Note/List"])

@@ -86,7 +86,14 @@ def day_of(creation):
 	return Cast_(creation, "date") if frappe.db.db_type == "postgres" else Date(creation)
 
 
-def daily_visits(user: str) -> list[dict]:
+def scoring_window_days(half_life_days: float) -> int:
+	"""Seven half-lives, so a visit left out was worth under 1% of one from today and could
+	not have changed an order. Deliberately wider than the default retention window: what it
+	bounds is the site that keeps Route History for a year, or forever."""
+	return round(7 * half_life_days)
+
+
+def daily_visits(user: str, window_days: int) -> list[dict]:
 	"""One row per route per day, rather than one per visit.
 
 	Grouping in SQL is what keeps this affordable: over the 90-day retention window a
@@ -95,6 +102,9 @@ def daily_visits(user: str) -> list[dict]:
 	in weeks.
 	"""
 	table = frappe.qb.DocType("Route History")
+	# Compared against a plain string rather than the backend's NOW(): sqlite has no such
+	# function, and a date-only bound matches the day granularity below anyway.
+	oldest_scored_day = frappe.utils.add_to_date(days=-window_days, as_string=True)
 	return (
 		frappe.qb.from_(table)
 		.select(
@@ -103,6 +113,7 @@ def daily_visits(user: str) -> list[dict]:
 			Count("*").as_("count"),
 		)
 		.where(table.user == user)
+		.where(table.creation >= oldest_scored_day)
 		.groupby(table.route, day_of(table.creation))
 	).run(as_dict=True)
 
@@ -137,9 +148,10 @@ def frequently_visited_links(limit: int | None = None) -> list[dict]:
 	tuning = get_tuning()
 	limit = min(max(frappe.utils.cint(limit or tuning["boot_link_limit"]), 1), MAX_LINKS)
 
-	# Decayed in Python rather than in SQL to stay portable across MariaDB and Postgres.
-	visits = daily_visits(frappe.session.user)
-	scores = score_visits(visits, frappe.utils.now_datetime().date(), tuning["frecency_half_life_days"])
+	# Decayed in Python rather than in SQL to stay portable across the backends.
+	half_life_days = tuning["frecency_half_life_days"]
+	visits = daily_visits(frappe.session.user, scoring_window_days(half_life_days))
+	scores = score_visits(visits, frappe.utils.now_datetime().date(), half_life_days)
 
 	return [{"route": route, "score": round(score, 3)} for route, score in scores.most_common(limit)]
 
