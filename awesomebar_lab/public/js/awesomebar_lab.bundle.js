@@ -296,11 +296,15 @@ awesomebar_lab.memory = {
 	 * timestamp per pick would grow the payload to sharpen a tie-breaker.
 	 */
 	confidence(entry) {
+		const weight = this.fade(entry);
+		return (entry.hits * weight + 1) / ((entry.hits + entry.misses) * weight + 2);
+	},
+
+	fade(entry) {
 		const idle_days = entry.last_used
 			? (Date.now() - entry.last_used) / (24 * 60 * 60 * 1000)
 			: 0;
-		const weight = 0.5 ** (idle_days / tuning("memory_half_life_days"));
-		return (entry.hits * weight + 1) / ((entry.hits + entry.misses) * weight + 2);
+		return 0.5 ** (idle_days / tuning("memory_half_life_days"));
 	},
 
 	record(query, value) {
@@ -312,12 +316,19 @@ awesomebar_lab.memory = {
 		const entry = memory[stored_key];
 		let updated;
 
-		if (!entry || (entry.value !== value && entry.misses + 1 >= entry.hits)) {
+		// Faded before they are weighed and stored: the write below resets last_used, so
+		// raw counts would revive an expired pin at full strength on the very pick that
+		// contradicts it.
+		const weight = entry ? this.fade(entry) : 1;
+		const hits = entry ? entry.hits * weight : 0;
+		const misses = entry ? entry.misses * weight : 0;
+
+		if (!entry || (entry.value !== value && misses + 1 >= hits)) {
 			updated = { value: value, hits: 1, misses: 0 };
 		} else if (entry.value === value) {
-			updated = { ...entry, hits: entry.hits + 1 };
+			updated = { value: value, hits: hits + 1, misses: misses };
 		} else {
-			updated = { ...entry, misses: entry.misses + 1 };
+			updated = { value: entry.value, hits: hits, misses: misses + 1 };
 		}
 
 		// Reinserting moves the key to the end of the iteration order, so the eviction
@@ -339,9 +350,9 @@ awesomebar_lab.memory = {
 			const threshold = tuning("memory_min_confidence");
 			console.log(
 				`[awesomebar_lab] remembered "${normalized_query}" → "${updated.value}" ` +
-					`(${updated.hits} hit(s), ${
-						updated.misses
-					} miss(es), confidence ${confidence.toFixed(2)}) — ` +
+					`(${+updated.hits.toFixed(2)} hit(s), ${+updated.misses.toFixed(
+						2
+					)} miss(es) after fading, confidence ${confidence.toFixed(2)}) — ` +
 					(confidence > threshold
 						? "will be pinned for this query"
 						: `below the ${threshold} threshold, not pinned yet`)
