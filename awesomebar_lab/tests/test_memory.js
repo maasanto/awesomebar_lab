@@ -93,4 +93,11 @@ memory.load()["q:inv"] = {
 memory.record("inv", "Invoice Discounting");
 assert.equal(memory.recall("inv"), "Invoice Discounting");
 
+// A pin must also clear the results the framework put on the list before its own matches,
+// like "Search for …" at 100, or it is pinned in name only.
+memory.record("cust", "Liste : Customer");
+const matches = [{ value: "Liste : Customer", index: 95 }];
+memory.pin(matches, "cust", [{ value: "Search for cust", index: 100 }]);
+assert.ok(matches[0].index > 100, `pin should outrank the defaults, got ${matches[0].index}`);
+
 console.log("remembered picks survive a longer query, persist, and expire when idle");

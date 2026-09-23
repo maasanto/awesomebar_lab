@@ -393,9 +393,10 @@ awesomebar_lab.memory = {
 	/**
 	 * Scores the result this user keeps picking for this exact query above every
 	 * other match. Only touches what the search already matched, so a remembered
-	 * choice never reappears once it stops matching what is being typed.
+	 * choice never reappears once it stops matching what is being typed. `rivals` are the
+	 * results already on the list that it must also outrank, like "Search for …".
 	 */
-	pin(options, query) {
+	pin(options, query, rivals = []) {
 		const remembered = this.recall(query);
 		if (!remembered) return;
 
@@ -414,7 +415,7 @@ awesomebar_lab.memory = {
 			return;
 		}
 
-		const top_index = Math.max(...options.map((option) => option.index)) + 1;
+		const top_index = Math.max(...options.concat(rivals).map((option) => option.index)) + 1;
 		pinned.forEach((option) => {
 			option.index = top_index;
 			option.boosted_by_history = true;
@@ -455,9 +456,10 @@ frappe.search.AwesomeBar = class extends frappe.search.AwesomeBar {
 		const options = super.build_options(txt);
 
 		// The rerank wants the array sorted by index, which is how the framework
-		// returns it; the pin outranks the rerank.
+		// returns it; the pin outranks the rerank, and the defaults the framework has
+		// already put on the list.
 		const log_trace = awesomebar_lab.frecency.rerank(options);
-		awesomebar_lab.memory.pin(options, txt);
+		awesomebar_lab.memory.pin(options, txt, this.options);
 		options.forEach(add_history_marker);
 		if (log_trace) log_trace();
 
