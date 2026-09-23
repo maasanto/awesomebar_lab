@@ -115,15 +115,25 @@ awesomebar_lab.frecency = {
 	refresh() {
 		if (this.refreshed) return;
 		this.refreshed = true;
-		frappe.xcall("awesomebar_lab.frecency.frequently_visited_links").then((links) => {
-			frappe.boot.awesomebar_lab_frecency = links;
-			this.load();
-			if (debug_enabled) {
-				console.log(
-					`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
-				);
-			}
-		});
+		// Silent: a failure here must not pop a dialog just because the search box got
+		// focus. The boot copy keeps ranking in the meantime, and the next focus retries.
+		frappe
+			.xcall("awesomebar_lab.frecency.frequently_visited_links", {}, "POST", {
+				silent: true,
+			})
+			.then((links) => {
+				frappe.boot.awesomebar_lab_frecency = links;
+				this.load();
+				if (debug_enabled) {
+					console.log(
+						`[awesomebar_lab] frecency refreshed: ${links.length} routes re-scored since boot`
+					);
+				}
+			})
+			.catch((error) => {
+				this.refreshed = false;
+				console.warn("[awesomebar_lab] could not refresh the visit history", error);
+			});
 	},
 
 	/**
