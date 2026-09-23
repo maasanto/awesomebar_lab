@@ -209,3 +209,33 @@ the top score sits just above 100, or a weak best match makes every result a nea
 
 Deliberately not ported: the permission filter (see above), and the framework's own
 `get_frequent_links` ordering fix, which this app does not touch.
+
+## What came back from the second core review (2026-09-23)
+
+Five more fixes from the second review of the `frappe/frappe` port, all of them real here.
+
+A contradicting pick revived an expired pin. `record` compared raw hits and misses, then reset
+`last_used` to now, which restored the decay weight to 1. A habit of five picks left idle for
+two months had long stopped pinning, yet one pick of something else made it `(5+1)/(6+2)`,
+0.75, and it pinned again, the opposite of what was just chosen. The counts are now faded
+before they are weighed and stored.
+
+A pin could still sit below "Search for …". It only outranked the results `build_options`
+returned, while the framework's defaults were already on the list at 100. It now takes the
+list built so far as rivals.
+
+A failed refresh popped a server dialog just because the search box got focus, and was never
+retried. It is silent now, logs to the console, and retries on the next focus.
+
+Days were bucketed wrong on sqlite, where `CAST(x AS DATE)` is a numeric cast that returns
+the year, and `DATE()` hands back text. `day_of` picks the right function per backend and
+the scoring reads the day through `getdate`.
+
+The scan was unbounded on a site that keeps Route History forever. Visits older than seven
+half-lives, worth under 1% of one from today, are no longer read.
+
+Deliberately not ported: re-pinning once hook results arrive, which would mean replacing the
+framework's `fetch_hook_results` (frappe 17 only); ranking workspaces, private ones included,
+since the framework's workspace options carry no route for this app to key on; the page and
+workspace permission filter, for the reason above; and the index on `Route History.user`,
+which an app should not add to a core DocType. The window above bounds that scan instead.
